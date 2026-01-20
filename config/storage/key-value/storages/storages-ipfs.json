@@ -1,0 +1,20 @@
+{
+    "@context": "https://linkedsoftwaredependencies.org/bundles/npm/@solid/community-server/^7.0.0/components/context.jsonld",
+    "comment": "Custom storages config that uses memory for locks when using IPFS backend",
+    "@graph": [
+        {
+            "comment": "Used for internal storage by the locker. Uses memory instead of file-based storage for IPFS compatibility.",
+            "@id": "urn:solid-server:default:LockStorage",
+            "@type": "MemoryMapStorage"
+        },
+        {
+            "comment": "Storage used by setup components.",
+            "@id": "urn:solid-server:default:SetupStorage",
+            "@type": "ContainerPathStorage",
+            "relativePath": "/setup/",
+            "source": {
+                "@id": "urn:solid-server:default:KeyValueStorage"
+            }
+        }
+    ]
+}

@@ -35,8 +35,8 @@ export class IpfsDataAccessor implements DataAccessor {
 
   /**
    * Ensures that the path starts with a leading slash as required by IPFS MFS.
-   * Also removes Windows drive letters and absolute paths.
-   * @param path - The file path to normalize.
+   * Also removes Windows drive letters and absolute paths to create IPFS-compatible paths.
+   * @param path - The file path to normalize (can be absolute Windows/Unix path).
    */
   private ensureLeadingSlash(path: string): string {
     // Remove Windows drive letter if present (C:/, D:/, etc.)
@@ -44,6 +44,14 @@ export class IpfsDataAccessor implements DataAccessor {
     
     // Replace backslashes with forward slashes
     normalized = normalized.replace(/\\/g, '/');
+    
+    // Extract relative path from root filepath
+    // Remove any leading path components before .data
+    const dataIndex = normalized.indexOf('/.data/');
+    if (dataIndex !== -1) {
+      // Keep everything from .data onwards
+      normalized = normalized.substring(dataIndex);
+    }
     
     // Ensure it starts with a single leading slash
     if (!normalized.startsWith('/')) {

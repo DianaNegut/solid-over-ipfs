@@ -115,6 +115,7 @@
     "fs-extra": "^11.1.1",
     "handlebars": "^4.7.8",
     "ioredis": "^5.3.2",
+    "ipfs": "^0.66.1",
     "iso8601-duration": "^2.1.1",
     "jose": "^4.15.2",
     "jsonld-context-parser": "^2.3.2",

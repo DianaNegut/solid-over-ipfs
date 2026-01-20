@@ -1,0 +1,49 @@
+{
+    "@context": "https://linkedsoftwaredependencies.org/bundles/npm/@solid/community-server/^7.0.0/components/context.jsonld",
+    "import": [
+        "css:config/storage/key-value/storages/storages-ipfs.json"
+    ],
+    "@graph": [
+        {
+            "comment": [
+                "A storage that writes directly to a low-level store. This is necessary to prevent infinite loops with stores that also use storage.",
+                "For IPFS, we use memory storage for locks, so this is simplified."
+            ],
+            "@id": "urn:solid-server:default:BackendKeyValueStorage",
+            "@type": "MemoryMapStorage"
+        },
+        {
+            "comment": "Internal value storage - uses memory for IPFS compatibility.",
+            "@id": "urn:solid-server:default:KeyValueStorage",
+            "@type": "MemoryMapStorage"
+        },
+        {
+            "comment": "Block external access to the storage containers to avoid exposing internal data.",
+            "@id": "urn:solid-server:default:PathBasedReader",
+            "@type": "PathBasedReader",
+            "paths": [
+                {
+                    "PathBasedReader:_paths_key": "^/.internal(/.*)?$",
+                    "PathBasedReader:_paths_value": {
+                        "@type": "AllStaticReader",
+                        "allow": false
+                    }
+                }
+            ]
+        },
+        {
+            "comment": "Marks the /.internal/ storage container as an auxiliary resource, thereby hiding it from container representations.",
+            "@id": "urn:solid-server:default:AuxiliaryStrategy",
+            "@type": "RoutingAuxiliaryStrategy",
+            "sources": [
+                {
+                    "@type": "ComposedAuxiliaryStrategy",
+                    "identifierStrategy": {
+                        "@type": "SuffixAuxiliaryIdentifierStrategy",
+                        "suffix": "/.internal/"
+                    }
+                }
+            ]
+        }
+    ]
+}

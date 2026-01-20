@@ -454,6 +454,9 @@ export * from './storage/accessors/ValidatingDataAccessor';
 // Storage/IPFS
 export * from './storage/ipfs/IpfsHelper';
 
+// Storage/Mapping
+export * from './storage/mapping/IpfsIdentifierMapper';
+
 // Storage/Conditions
 export * from './storage/conditions/BasicConditions';
 export * from './storage/conditions/BasicETagHandler';

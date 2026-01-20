@@ -21,8 +21,7 @@
     "css:config/ldp/metadata-parser/default.json",
     "css:config/ldp/metadata-writer/default.json",
     "css:config/ldp/modes/default.json",
-    "css:config/storage/backend/ipfs.json",
-    "css:config/storage/key-value/resource-store.json",
+    "css:config/storage/key-value/resource-store-ipfs.json",
     "css:config/storage/location/pod.json",
     "css:config/storage/middleware/default.json",
     "css:config/util/auxiliary/acl.json",
@@ -31,7 +30,8 @@
     "css:config/util/logging/winston.json",
     "css:config/util/representation-conversion/default.json",
     "css:config/util/resource-locker/memory.json",
-    "css:config/util/variables/default.json"
+    "css:config/util/variables/default.json",
+    "css:config/storage/backend/ipfs.json"
   ],
   "@graph": [
     {

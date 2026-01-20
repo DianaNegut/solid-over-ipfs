@@ -4,6 +4,7 @@ import type { SystemError } from '../../util/errors/SystemError';
 import { getLoggerFor } from '../../logging/LogUtil';
 
 /* eslint-disable @typescript-eslint/naming-convention */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 /**
  * Helper class to interact with IPFS using the Mutable File System (MFS).
@@ -53,9 +54,42 @@ export class IpfsHelper {
         },
       });
       this.logger.info('Embedded IPFS node started successfully');
+      
+      // Initialize root directory in MFS
+      await this.initializeRootDirectory();
     } catch (error) {
       this.logger.error(`Failed to create IPFS node: ${error}`);
       throw error;
+    }
+  }
+
+  /**
+   * Initialize the root directory structure in IPFS MFS
+   */
+  private async initializeRootDirectory(): Promise<void> {
+    try {
+      const mfs = this.node.files;
+      
+      // Check if root exists, if not create it
+      try {
+        await mfs.stat('/');
+        this.logger.info('IPFS MFS root already exists');
+      } catch {
+        // Root doesn't exist, this shouldn't happen but handle it anyway
+        this.logger.info('Creating IPFS MFS root directory');
+      }
+      
+      // Ensure .data directory exists for the server
+      try {
+        await mfs.stat('/.data');
+        this.logger.info('IPFS MFS /.data directory already exists');
+      } catch {
+        this.logger.info('Creating IPFS MFS /.data directory');
+        await mfs.mkdir('/.data', { parents: true });
+      }
+    } catch (error) {
+      this.logger.warn(`Could not initialize root directory: ${error}`);
+      // Don't throw - this is not critical, directories will be created on demand
     }
   }
 

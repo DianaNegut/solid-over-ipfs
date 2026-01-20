@@ -1,0 +1,39 @@
+{
+  "@context": [
+    "https://linkedsoftwaredependencies.org/bundles/npm/@solid/community-server/^7.0.0/components/context.jsonld",
+    {
+      "IpfsHelper": "css:storage/ipfs/IpfsHelper",
+      "IpfsDataAccessor": "css:storage/accessors/IpfsDataAccessor"
+    }
+  ],
+  "@graph": [
+    {
+      "@id": "css:storage/ipfs/IpfsHelper",
+      "@type": "Class",
+      "requireElement": "IpfsHelper",
+      "comment": "Helper class for interacting with IPFS Mutable File System (MFS)"
+    },
+    {
+      "@id": "css:storage/accessors/IpfsDataAccessor",
+      "@type": "Class",
+      "requireElement": "IpfsDataAccessor",
+      "comment": "A DataAccessor that uses IPFS MFS for storage.",
+      "parameters": [
+        {
+          "@id": "css:storage/accessors/IpfsDataAccessor#resourceMapper",
+          "comment": "Maps identifiers to file paths",
+          "required": true
+        },
+        {
+          "@id": "css:storage/accessors/IpfsDataAccessor#ipfsHelper",
+          "comment": "The IPFS helper instance",
+          "required": true
+        }
+      ],
+      "constructorArguments": [
+        { "@id": "css:storage/accessors/IpfsDataAccessor#resourceMapper" },
+        { "@id": "css:storage/accessors/IpfsDataAccessor#ipfsHelper" }
+      ]
+    }
+  ]
+}

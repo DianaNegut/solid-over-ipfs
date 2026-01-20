@@ -1,0 +1,17 @@
+{
+  "@context": "https://linkedsoftwaredependencies.org/bundles/npm/@solid/community-server/^7.0.0/components/context.jsonld",
+  "@graph": [
+    {
+      "comment": "IPFS Helper instance for connecting to IPFS network",
+      "@id": "urn:solid-server:default:IpfsHelper",
+      "@type": "css:storage/ipfs/IpfsHelper"
+    },
+    {
+      "comment": "Stores data on IPFS using the Mutable File System (MFS).",
+      "@id": "urn:solid-server:default:IpfsDataAccessor",
+      "@type": "css:storage/accessors/IpfsDataAccessor",
+      "IpfsDataAccessor:_resourceMapper": { "@id": "urn:solid-server:default:FileIdentifierMapper" },
+      "IpfsDataAccessor:_ipfsHelper": { "@id": "urn:solid-server:default:IpfsHelper" }
+    }
+  ]
+}

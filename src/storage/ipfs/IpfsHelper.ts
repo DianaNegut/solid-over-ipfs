@@ -1,5 +1,8 @@
 import type { StatsBase } from 'node:fs';
 import { Readable } from 'node:stream';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as crypto from 'node:crypto';
 import type { SystemError } from '../../util/errors/SystemError';
 import { getLoggerFor } from '../../logging/LogUtil';
 
@@ -8,59 +11,57 @@ import { getLoggerFor } from '../../logging/LogUtil';
 
 /**
  * Helper class to interact with IPFS using the Mutable File System (MFS).
- * This class uses an embedded IPFS node for storage.
+ * Connects to an external IPFS node (Kubo) via HTTP API.
+ * Supports private IPFS networks with swarm keys.
  */
 export class IpfsHelper {
   protected readonly logger = getLoggerFor(this);
-  private node: any;
-  private readonly repo: string;
+  private client: any;
+  private readonly url: string;
+  private readonly privateNetwork: boolean;
   private initPromise: Promise<void> | null = null;
 
-  public constructor(options?: { url?: string; repo?: string }) {
-    // Use repo path for embedded node, default to /tmp/solid-ipfs
-    this.repo = options?.repo || '/tmp/solid-ipfs';
-    this.logger.info(`Initializing embedded IPFS node with repo: ${this.repo}`);
+  public constructor(options?: { url?: string; repo?: string; swarmKey?: string; privateNetwork?: boolean }) {
+    this.url = options?.url || 'http://127.0.0.1:5001';
+    this.privateNetwork = options?.privateNetwork ?? false;
+    
+    if (this.privateNetwork) {
+      this.logger.info(`Connecting to IPFS node at ${this.url} (PRIVATE NETWORK)`);
+    } else {
+      this.logger.info(`Connecting to IPFS node at ${this.url}`);
+    }
   }
 
-  private async initNode(): Promise<void> {
-    if (this.node) {
+  private async initClient(): Promise<void> {
+    if (this.client) {
       return;
     }
 
     try {
       // Dynamic import for ESM module
-      const ipfsModule = await import('ipfs') as any;
-      const create = ipfsModule.create;
+      const { create } = await import('ipfs-http-client');
 
-      if (!create) {
-        throw new Error('Could not find IPFS create function');
+      this.logger.info('Connecting to IPFS HTTP API...');
+      
+      this.client = create({ url: this.url });
+      
+      // Test connection and get node info
+      const id = await this.client.id();
+      this.logger.info(`✅ Connected to IPFS node`);
+      this.logger.info(`📌 Peer ID: ${id.id}`);
+      
+      if (this.privateNetwork) {
+        this.logger.info('🔐 Running in PRIVATE NETWORK mode');
       }
-
-      this.logger.info('Creating embedded IPFS node...');
-      this.node = await create({
-        repo: this.repo,
-        start: true,
-        config: {
-          Addresses: {
-            Swarm: [],
-            API: '',
-            Gateway: '',
-          },
-          Bootstrap: [],
-          Discovery: {
-            MDNS: { Enabled: false },
-            webRTCStar: { Enabled: false },
-          },
-        },
-      });
-      this.logger.info('Embedded IPFS node started successfully');
       
       // Initialize root directory in MFS
       await this.initializeRootDirectory();
     } catch (error) {
-      this.logger.error(`Failed to create IPFS node: ${error}`);
+      this.logger.error(`Failed to connect to IPFS node at ${this.url}: ${error}`);
+      this.logger.error('Make sure Kubo (IPFS) daemon is running: ipfs daemon');
       throw error;
     }
+
   }
 
   /**
@@ -68,24 +69,21 @@ export class IpfsHelper {
    */
   private async initializeRootDirectory(): Promise<void> {
     try {
-      const mfs = this.node.files;
-      
-      // Check if root exists, if not create it
+      // Check if root exists
       try {
-        await mfs.stat('/');
-        this.logger.info('IPFS MFS root already exists');
+        await this.client.files.stat('/');
+        this.logger.debug('IPFS MFS root already exists');
       } catch {
-        // Root doesn't exist, this shouldn't happen but handle it anyway
-        this.logger.info('Creating IPFS MFS root directory');
+        this.logger.debug('IPFS MFS root verified');
       }
       
       // Ensure .data directory exists for the server
       try {
-        await mfs.stat('/.data');
-        this.logger.info('IPFS MFS /.data directory already exists');
+        await this.client.files.stat('/.data');
+        this.logger.debug('IPFS MFS /.data directory already exists');
       } catch {
         this.logger.info('Creating IPFS MFS /.data directory');
-        await mfs.mkdir('/.data', { parents: true });
+        await this.client.files.mkdir('/.data', { parents: true });
       }
     } catch (error) {
       this.logger.warn(`Could not initialize root directory: ${error}`);
@@ -93,16 +91,16 @@ export class IpfsHelper {
     }
   }
 
-  private async ensureNode(): Promise<void> {
+  private async ensureClient(): Promise<void> {
     if (!this.initPromise) {
-      this.initPromise = this.initNode();
+      this.initPromise = this.initClient();
     }
     await this.initPromise;
   }
 
   private async mfs(): Promise<any> {
-    await this.ensureNode();
-    return this.node.files;
+    await this.ensureClient();
+    return this.client.files;
   }
 
   /**
@@ -292,13 +290,13 @@ export class IpfsHelper {
   }
 
   /**
-   * Stop/close the IPFS node
+   * Stop/close the IPFS client
    */
   public async stop(): Promise<void> {
-    this.logger.info('Stopping IPFS node');
-    if (this.node) {
-      await this.node.stop();
-      this.node = null;
+    this.logger.info('Disconnecting from IPFS node');
+    if (this.client) {
+      // HTTP client doesn't need explicit cleanup
+      this.client = null;
       this.initPromise = null;
     }
   }

@@ -1,0 +1,23 @@
+{
+  "@context": "https://linkedsoftwaredependencies.org/bundles/npm/@solid/community-server/^7.0.0/components/context.jsonld",
+  "@graph": [
+    {
+      "comment": "IPFS Helper instance connecting to external Kubo node for private network",
+      "@id": "urn:solid-server:default:IpfsHelper",
+      "@type": "IpfsHelper",
+      "IpfsHelper:_options_url": "http://127.0.0.1:5002",
+      "IpfsHelper:_options_privateNetwork": true
+    },
+    {
+      "comment": "Stores data on IPFS using the Mutable File System (MFS).",
+      "@id": "urn:solid-server:default:IpfsDataAccessor",
+      "@type": "IpfsDataAccessor",
+      "IpfsDataAccessor:_resourceMapper": {
+        "@id": "urn:solid-server:default:FileIdentifierMapper"
+      },
+      "IpfsDataAccessor:_ipfsHelper": {
+        "@id": "urn:solid-server:default:IpfsHelper"
+      }
+    }
+  ]
+}

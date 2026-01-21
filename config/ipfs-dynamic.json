@@ -14,13 +14,14 @@
     "css:config/identity/handler/default.json",
     "css:config/identity/oidc/default.json",
     "css:config/identity/ownership/token.json",
-    "css:config/identity/pod/static.json",
+    "css:config/identity/pod/dynamic.json",
     "css:config/ldp/authentication/dpop-bearer.json",
     "css:config/ldp/authorization/allow-all.json",
     "css:config/ldp/handler/default.json",
     "css:config/ldp/metadata-parser/default.json",
     "css:config/ldp/metadata-writer/default.json",
     "css:config/ldp/modes/default.json",
+    "css:config/storage/backend/ipfs-dynamic.json",
     "css:config/storage/key-value/resource-store-ipfs.json",
     "css:config/storage/location/pod.json",
     "css:config/storage/middleware/default.json",
@@ -30,12 +31,14 @@
     "css:config/util/logging/winston.json",
     "css:config/util/representation-conversion/default.json",
     "css:config/util/resource-locker/memory.json",
-    "css:config/util/variables/default.json",
-    "css:config/storage/backend/ipfs-private.json"
+    "css:config/util/variables/default.json"
   ],
   "@graph": [
     {
-      "comment": "A Solid server that stores its resources on a PRIVATE IPFS network and uses WAC for authorization."
+      "comment": [
+        "A Solid server with dynamic pod provisioning using IPFS private network as storage backend.",
+        "Allows creation of pods through pod provisioning API with data stored on private IPFS network."
+      ]
     }
   ]
 }

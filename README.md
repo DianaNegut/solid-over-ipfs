@@ -50,7 +50,35 @@ npx @solid/community-server -c @css:config/file.json -f data/
 In case you prefer to use Docker instead,
 you can find instructions for this and other methods in the
 [documentation](https://communitysolidserver.github.io/CommunitySolidServer/latest/usage/starting-server/).
+## 🌐 IPFS Storage Backend
 
+This fork includes support for using IPFS (InterPlanetary File System) as a storage backend, enabling decentralized data storage for your Solid pods.
+
+### Standard IPFS Backend
+
+```shell
+npm start -- -c config/ipfs.json -f .data
+```
+
+### Private IPFS Network
+
+Set up your own private IPFS network for enhanced security and control:
+
+```shell
+# Generate a swarm key
+node generate-swarm-key.js
+
+# Verify setup
+node verify-private-network.js
+
+# Start with private network configuration
+npm start -- -c config/ipfs-private.json -f .data -p 3000
+```
+
+For detailed setup and testing instructions, see:
+- [TESTING_GUIDE.md](TESTING_GUIDE.md) - **How to test private network** 🧪
+- [IPFS_BACKEND.md](IPFS_BACKEND.md) - Public IPFS setup
+- [PRIVATE_IPFS_NETWORK.md](PRIVATE_IPFS_NETWORK.md) - Private network configuration
 ## 🔧 Configure your server
 
 Substantial changes to server behavior can be achieved via JSON configuration files.

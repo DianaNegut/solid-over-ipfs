@@ -46,16 +46,17 @@ export class IpfsDataAccessor implements DataAccessor {
     normalized = normalized.replace(/\\/g, '/');
     
     // Extract relative path from root filepath
-    // Remove any leading path components before .data
-    const dataIndex = normalized.indexOf('/.data/');
-    if (dataIndex !== -1) {
-      // Keep everything from .data onwards
-      normalized = normalized.substring(dataIndex);
-    }
-    
-    // Ensure it starts with a single leading slash
-    if (!normalized.startsWith('/')) {
-      normalized = `/${normalized}`;
+    // Look for .data directory (with or without trailing slash)
+    const dataMatch = normalized.match(/\/(\.data\d*)($|\/)/);
+    if (dataMatch) {
+      // Extract everything from .data onwards
+      const dataIndex = normalized.indexOf(dataMatch[1]);
+      normalized = '/' + normalized.substring(dataIndex);
+    } else {
+      // If no .data directory found, keep as-is but ensure leading slash
+      if (!normalized.startsWith('/')) {
+        normalized = `/${normalized}`;
+      }
     }
     
     // Remove double slashes
@@ -351,11 +352,13 @@ export class IpfsDataAccessor implements DataAccessor {
 
     // For every child in the container we want to generate specific metadata
     for (const childName of files) {
-      // Obtain details of the entry
-      const childPath = joinFilePath(this.ensureLeadingSlash(link.filePath), childName);
+      // Obtain details of the entry - use IPFS path for operations
+      const childPathIpfs = joinFilePath(this.ensureLeadingSlash(link.filePath), childName);
+      // But also build the full Windows path for mapping
+      const childPath = joinFilePath(link.filePath, childName);
       let childStats;
       try {
-        childStats = await this.getStats(this.ensureLeadingSlash(childPath));
+        childStats = await this.getStats(childPathIpfs);
       } catch {
         // Skip this entry if details could not be retrieved
         continue;
@@ -366,7 +369,7 @@ export class IpfsDataAccessor implements DataAccessor {
         continue;
       }
 
-      // Generate the URI corresponding to the child resource
+      // Generate the URI corresponding to the child resource using full path
       const childLink = await this.resourceMapper.mapFilePathToUrl(childPath, childStats.isDirectory());
 
       // Hide metadata files

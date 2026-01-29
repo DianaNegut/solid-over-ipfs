@@ -1,0 +1,46 @@
+{
+  "@context": "https://linkedsoftwaredependencies.org/bundles/npm/@solid/community-server/^7.0.0/components/context.jsonld",
+  "import": [
+    "css:config/storage/key-value/storages/storages-ipfs.json"
+  ],
+  "@graph": [
+    {
+      "comment": "PostgreSQL storage for identity/account data - PERSISTENT across restarts",
+      "@id": "urn:solid-server:default:KeyValueStorage",
+      "@type": "PostgresStorage"
+    },
+    {
+      "comment": "Used for internal storage by the locker. Uses memory for IPFS compatibility.",
+      "@id": "urn:solid-server:default:BackendKeyValueStorage",
+      "@type": "MemoryMapStorage"
+    },
+    {
+      "comment": "Block external access to the storage containers to avoid exposing internal data.",
+      "@id": "urn:solid-server:default:PathBasedReader",
+      "@type": "PathBasedReader",
+      "paths": [
+        {
+          "PathBasedReader:_paths_key": "^/.internal(/.*)?$",
+          "PathBasedReader:_paths_value": {
+            "@type": "AllStaticReader",
+            "allow": false
+          }
+        }
+      ]
+    },
+    {
+      "comment": "Marks the /.internal/ storage container as an auxiliary resource.",
+      "@id": "urn:solid-server:default:AuxiliaryStrategy",
+      "@type": "RoutingAuxiliaryStrategy",
+      "sources": [
+        {
+          "@type": "ComposedAuxiliaryStrategy",
+          "identifierStrategy": {
+            "@type": "SuffixAuxiliaryIdentifierStrategy",
+            "suffix": "/.internal/"
+          }
+        }
+      ]
+    }
+  ]
+}

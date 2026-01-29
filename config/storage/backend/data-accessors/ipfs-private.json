@@ -5,7 +5,7 @@
       "comment": "IPFS Helper instance connecting to external Kubo node for private network",
       "@id": "urn:solid-server:default:IpfsHelper",
       "@type": "IpfsHelper",
-      "IpfsHelper:_options_url": "http://127.0.0.1:5002",
+      "IpfsHelper:_options_url": "http://127.0.0.1:5001",
       "IpfsHelper:_options_privateNetwork": true
     },
     {

@@ -454,6 +454,9 @@ export * from './storage/accessors/ValidatingDataAccessor';
 // Storage/IPFS
 export * from './storage/ipfs/IpfsHelper';
 
+// Storage/PostgreSQL
+export * from './storage/postgres';
+
 // Storage/Mapping
 export * from './storage/mapping/IpfsIdentifierMapper';
 

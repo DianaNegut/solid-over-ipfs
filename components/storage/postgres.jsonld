@@ -1,0 +1,35 @@
+{
+  "@context": [
+    "https://linkedsoftwaredependencies.org/bundles/npm/@solid/community-server/^7.0.0/components/context.jsonld",
+    "https://linkedsoftwaredependencies.org/bundles/npm/componentsjs/^5.0.0/components/context.jsonld"
+  ],
+  "@id": "npmd:@solid/community-server",
+  "@type": "Module",
+  "requireElement": "PostgresStorage",
+  "import": [
+    "css:storage/postgres/PostgresStorage.ts"
+  ],
+  "components": [
+    {
+      "@id": "css:storage/postgres/PostgresStorage",
+      "@type": "Class",
+      "requireElement": "PostgresStorage",
+      "comment": "PostgreSQL-backed KeyValueStorage for persistent identity data.",
+      "parameters": [
+        {
+          "@id": "css:storage/postgres/PostgresStorage#tableName",
+          "comment": "The PostgreSQL table name to use for this storage.",
+          "range": "xsd:string",
+          "default": "accounts",
+          "unique": true
+        }
+      ],
+      "constructorArguments": [
+        {
+          "@id": "css:storage/postgres/PostgresStorage#tableName_arg",
+          "extends": "css:storage/postgres/PostgresStorage#tableName"
+        }
+      ]
+    }
+  ]
+}

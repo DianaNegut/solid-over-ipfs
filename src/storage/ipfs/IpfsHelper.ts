@@ -46,9 +46,20 @@ export class IpfsHelper {
       this.client = create({ url: this.url });
       
       // Test connection and get node info
-      const id = await this.client.id();
-      this.logger.info(`✅ Connected to IPFS node`);
-      this.logger.info(`📌 Peer ID: ${id.id}`);
+      try {
+        const id = await this.client.id();
+        this.logger.info(`✅ Connected to IPFS node`);
+        this.logger.info(`📌 Peer ID: ${id.id}`);
+      } catch (idError: any) {
+        // If id() fails due to protocol parsing (e.g., webrtc-direct), test with version instead
+        if (idError.message?.includes('no protocol with name')) {
+          this.logger.warn('⚠️ Unable to parse peer addresses (incompatible protocols), but connection is working');
+          const version = await this.client.version();
+          this.logger.info(`✅ Connected to IPFS node (version: ${version.version})`);
+        } else {
+          throw idError;
+        }
+      }
       
       if (this.privateNetwork) {
         this.logger.info('🔐 Running in PRIVATE NETWORK mode');

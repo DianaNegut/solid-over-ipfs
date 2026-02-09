@@ -97,25 +97,23 @@ export class IpfsDataAccessor implements DataAccessor {
   public async getMetadata(identifier: ResourceIdentifier): Promise<RepresentationMetadata> {
     const link = await this.resourceMapper.mapUrlToFilePath(identifier, false);
     
-    // For containers, try to get stats, and if it doesn't exist, create it
+    
     if (isContainerIdentifier(identifier)) {
       try {
         const stats = await this.getStats(this.ensureLeadingSlash(link.filePath));
         return this.getDirectoryMetadata(link, stats);
       } catch (error: unknown) {
         if (isSystemError(error) && error.code === 'ENOENT') {
-          // Directory doesn't exist, create it
+        
           this.logger.debug(`Creating directory in IPFS: ${link.filePath}`);
           await this.ipfsHelper.mkdir(this.ensureLeadingSlash(link.filePath));
-          // After creating, get the stats
+         
           const stats = await this.getStats(this.ensureLeadingSlash(link.filePath));
           return this.getDirectoryMetadata(link, stats);
         }
         throw error;
       }
     }
-    
-    // For files
     const stats = await this.getStats(this.ensureLeadingSlash(link.filePath));
     if (stats.isFile()) {
       return this.getFileMetadata(link, stats);

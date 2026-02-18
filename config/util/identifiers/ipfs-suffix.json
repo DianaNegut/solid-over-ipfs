@@ -1,0 +1,25 @@
+{
+  "@context": "https://linkedsoftwaredependencies.org/bundles/npm/@solid/community-server/^7.0.0/components/context.jsonld",
+  "comment": "Suffix-based identifiers using IPFS MFS for directory listing instead of local filesystem.",
+  "@graph": [
+    {
+      "@id": "urn:solid-server:default:IdentifierStrategy",
+      "@type": "SingleRootIdentifierStrategy",
+      "baseUrl": { "@id": "urn:solid-server:default:variable:baseUrl" }
+    },
+    {
+      "comment": "Only required when pod creation is enabled.",
+      "@id": "urn:solid-server:default:IdentifierGenerator",
+      "@type": "SuffixIdentifierGenerator",
+      "base": { "@id": "urn:solid-server:default:variable:baseUrl" }
+    },
+    {
+      "comment": "IPFS-aware file identifier mapper that reads directories from IPFS MFS.",
+      "@id": "urn:solid-server:default:FileIdentifierMapper",
+      "@type": "IpfsExtensionBasedMapper",
+      "base": { "@id": "urn:solid-server:default:variable:baseUrl" },
+      "rootFilepath": { "@id": "urn:solid-server:default:variable:rootFilePath" },
+      "ipfsHelper": { "@id": "urn:solid-server:default:IpfsHelper" }
+    }
+  ]
+}

@@ -51,7 +51,7 @@ export class ExtensionBasedMapper extends BaseFileIdentifierMapper {
       const [ , folder, documentName ] = /^(.*\/)([^/]*)$/u.exec(filePath)!;
       let fileName: string | undefined;
       try {
-        const files = await fsPromises.readdir(folder);
+        const files = await this.getFilesInDirectory(folder);
         fileName = files.find((file): boolean =>
           file.startsWith(documentName) && /^(?:\$\..+)?$/u.test(file.slice(documentName.length)));
       } catch {
@@ -97,6 +97,17 @@ export class ExtensionBasedMapper extends BaseFileIdentifierMapper {
       path = path.slice(0, -(extension.length + 2));
     }
     return path;
+  }
+
+  /**
+   * Lists files in the given directory. Can be overridden by subclasses
+   * to use different storage backends (e.g., IPFS MFS).
+   *
+   * @param folder - The absolute path of the directory.
+   * @returns Array of file/directory names in the folder.
+   */
+  protected async getFilesInDirectory(folder: string): Promise<string[]> {
+    return fsPromises.readdir(folder);
   }
 }
 

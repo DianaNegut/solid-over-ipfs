@@ -459,6 +459,7 @@ export * from './storage/postgres';
 
 // Storage/Mapping
 export * from './storage/mapping/IpfsIdentifierMapper';
+export * from './storage/mapping/IpfsExtensionBasedMapper';
 
 // Storage/Conditions
 export * from './storage/conditions/BasicConditions';

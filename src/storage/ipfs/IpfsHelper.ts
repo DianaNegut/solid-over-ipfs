@@ -115,17 +115,57 @@ export class IpfsHelper {
   }
 
   /**
-   * Write data to a file in IPFS MFS
+   * Write data to a file in IPFS network and MFS.
+   * This ensures the file is available for P2P distribution.
+   * 
+   * Flow:
+   * 1. Add content to IPFS network (makes it available P2P)
+   * 2. Pin the CID locally (ensures it stays available)
+   * 3. Copy to MFS path (for organization and file system-like access)
    */
   public async write(file: { path: string; content: Readable }): Promise<void> {
-    this.logger.warn(`🔴 IPFS WRITE CALLED: ${file.path}`);
-    const mfs = await this.mfs();
-    await mfs.write(file.path, file.content, {
-      create: true,
-      parents: true,
-      mtime: new Date()
-    });
-    this.logger.warn(`✅ IPFS WRITE SUCCESS: ${file.path}`);
+    this.logger.info(`📝 IPFS Write: ${file.path}`);
+    await this.ensureClient();
+    
+    try {
+      // Step 1: Add content to IPFS network
+      // This makes the data available for P2P distribution
+      this.logger.debug(`  ➜ Adding to IPFS network...`);
+      const addResult = await this.client.add(file.content, {
+        pin: true, // Automatically pin after adding
+        cidVersion: 1,
+        wrapWithDirectory: false
+      });
+      
+      const cid = addResult.cid.toString();
+      this.logger.info(`  ✅ Added to IPFS network: ${cid}`);
+      this.logger.info(`  📌 Pinned locally for persistence`);
+      
+      // Step 2: Copy from IPFS network to MFS path
+      // This allows file system-like organization while keeping P2P availability
+      this.logger.debug(`  ➜ Copying to MFS: ${file.path}`);
+      const mfs = await this.mfs();
+      
+      // Remove existing file if present (to overwrite)
+      try {
+        await mfs.rm(file.path);
+      } catch (error: any) {
+        // Ignore if file doesn't exist
+        if (error.code !== 'ERR_NOT_FOUND' && !error.message?.includes('does not exist')) {
+          throw error;
+        }
+      }
+      
+      // Copy from IPFS to MFS
+      await mfs.cp(`/ipfs/${cid}`, file.path, { parents: true });
+      
+      this.logger.info(`  ✅ File ready: ${file.path}`);
+      this.logger.info(`  🌐 Available in P2P network as: ${cid}`);
+      
+    } catch (error: any) {
+      this.logger.error(`❌ IPFS write failed for ${file.path}: ${error.message}`);
+      throw error;
+    }
   }
 
   /**

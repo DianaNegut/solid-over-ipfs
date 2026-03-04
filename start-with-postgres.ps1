@@ -12,6 +12,10 @@ Write-Host "✅ Environment variables set" -ForegroundColor Green
 Write-Host "   POSTGRES_HOST: $env:POSTGRES_HOST" -ForegroundColor Yellow
 Write-Host "   POSTGRES_DB: $env:POSTGRES_DB" -ForegroundColor Yellow
 
+# Allow self-signed certificates (needed because CSS calls back to itself via Vite HTTPS proxy for DPoP token verification)
+$env:NODE_TLS_REJECT_UNAUTHORIZED = "0"
+Write-Host "⚠️  NODE_TLS_REJECT_UNAUTHORIZED=0 (dev only - allows self-signed certs)" -ForegroundColor Yellow
+
 # Start the server
 Write-Host "`n🔷 Starting Community Solid Server..." -ForegroundColor Cyan
-npm start -- -c config/ipfs-with-postgres.json -f .data1 -p 3000
+npm start -- -c config/ipfs-with-postgres.json -f .data1 -p 3000 --baseUrl https://10.35.193.215:3001/solid/

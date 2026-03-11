@@ -31,7 +31,7 @@
     "css:config/util/representation-conversion/default.json",
     "css:config/util/resource-locker/memory.json",
     "css:config/util/variables/default.json",
-    "css:config/storage/backend/ipfs.json"
+    "css:config/storage/backend/ipfs-private.json"
   ],
   "@graph": [
     {

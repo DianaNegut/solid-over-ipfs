@@ -21,7 +21,7 @@ export class IpfsHelper {
   private readonly privateNetwork: boolean;
   private initPromise: Promise<void> | null = null;
 
-  public constructor(options?: { url?: string; repo?: string; swarmKey?: string; privateNetwork?: boolean }) {
+  public constructor(options?: { url?: string; swarmKey?: string; privateNetwork?: boolean }) {
     this.url = options?.url || 'http://127.0.0.1:5001';
     this.privateNetwork = options?.privateNetwork ?? false;
     
@@ -337,6 +337,46 @@ export class IpfsHelper {
         throw sysError;
       }
       throw error;
+    }
+  }
+
+  /**
+   * Add content to IPFS network WITHOUT copying to MFS.
+   * Used for large files — blocks are pinned locally but no MFS directory entry is created.
+   * Returns the CID string of the added content.
+   */
+  public async addContent(content: Readable): Promise<string> {
+    await this.ensureClient();
+    this.logger.info('Adding content to IPFS network (pin only, no MFS copy)...');
+    const addResult = await this.client.add(content, {
+      pin: true,
+      cidVersion: 1,
+      wrapWithDirectory: false,
+    });
+    const cid = addResult.cid.toString();
+    this.logger.info(`✅ Added to IPFS network (pinned): ${cid}`);
+    return cid;
+  }
+
+  /**
+   * Stream content by CID from the IPFS network.
+   * If pinned locally, blocks are served from local store; otherwise fetched from peers.
+   */
+  public async cat(cid: string): Promise<Readable> {
+    await this.ensureClient();
+    this.logger.debug(`Streaming CID from IPFS network: ${cid}`);
+    return Readable.from(this.client.cat(cid));
+  }
+
+  /**
+   * Check if an MFS path exists without throwing on ENOENT.
+   */
+  public async exists(path: string): Promise<boolean> {
+    try {
+      await this.lstat(path);
+      return true;
+    } catch {
+      return false;
     }
   }
 

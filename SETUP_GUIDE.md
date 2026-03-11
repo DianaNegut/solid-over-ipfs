@@ -99,11 +99,11 @@ If you get connection errors:
    ```powershell
    ipfs config Addresses.API
    ```
-   Should output: `/ip4/127.0.0.1/tcp/5002` (or 5001)
+   Should output: `/ip4/127.0.0.1/tcp/5002` (or 5002)
 
 3. Test API manually:
    ```powershell
-   curl http://127.0.0.1:5001/api/v0/version
+   curl http://127.0.0.1:5002/api/v0/version
    ```
 
 ### Build Issues
@@ -196,4 +196,4 @@ npm test -- test/unit/storage/accessors/IpfsDataAccessor.test.ts
 1. Create a pod and identity
 2. Test with various Solid applications
 3. Explore IPFS features (pinning, clustering)
-4. Monitor IPFS metrics: http://localhost:5001/webui
+4. Monitor IPFS metrics: http://localhost:5002/webui

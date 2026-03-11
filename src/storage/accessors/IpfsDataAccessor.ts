@@ -1,4 +1,4 @@
-import type { Readable } from 'node:stream';
+import { Readable } from 'node:stream';
 import type { Representation } from '../../http/representation/Representation';
 import { RepresentationMetadata } from '../../http/representation/RepresentationMetadata';
 import type { ResourceIdentifier } from '../../http/representation/ResourceIdentifier';
@@ -17,6 +17,16 @@ import { CONTENT_TYPE_TERM, DC, IANA, LDP, POSIX, RDF, SOLID_META, XSD } from '.
 import type { FileIdentifierMapper, ResourceLink } from '../mapping/FileIdentifierMapper';
 import type { IpfsHelper, IpfsStats } from '../ipfs/IpfsHelper';
 import type { DataAccessor } from './DataAccessor';
+
+// Files larger than this threshold are stored as IPFS pointers instead of being
+// written directly into MFS.  Only the CID pointer (a tiny JSON file) goes to MFS;
+// the actual blocks stay pinned in Kubo until the provider confirms the deal.
+// Set to 0 to route ALL files (including small ones) through the provider deal flow.
+const LARGE_FILE_THRESHOLD = 0; // all files go to provider
+
+// Registry server URL — notified after adding a large file to IPFS so a provider
+// deal can be initiated automatically.
+const REGISTRY_URL = process.env.REGISTRY_API_URL || 'http://localhost:4000';
 
 /**
  * DataAccessor that uses IPFS to store documents as files and containers as folders.
@@ -77,14 +87,25 @@ export class IpfsDataAccessor implements DataAccessor {
 
   /**
    * Will return data stream directly to the file corresponding to the resource.
+   * For large files stored as pointers, streams content by CID from the IPFS network.
    * Will throw NotFoundHttpError if the input is a container.
    */
   public async getData(identifier: ResourceIdentifier): Promise<Guarded<Readable>> {
     const link = await this.resourceMapper.mapUrlToFilePath(identifier, false);
-    const stats = await this.getStats(this.ensureLeadingSlash(link.filePath));
+    const normalPath = this.ensureLeadingSlash(link.filePath);
+    const pointerPath = normalPath + '.ipfs-ptr';
 
+    // Check for pointer FIRST — if the .bin doesn’t exist but .ipfs-ptr does,
+    // getStats would throw ENOENT incorrectly.
+    if (await this.ipfsHelper.exists(pointerPath)) {
+      const pointer = await this.readPointer(pointerPath);
+      this.logger.debug(`getData: streaming CID ${pointer.cid} from IPFS network`);
+      return guardStream(await this.ipfsHelper.cat(pointer.cid));
+    }
+
+    const stats = await this.getStats(normalPath);
     if (stats.isFile()) {
-      return guardStream(await this.ipfsHelper.read(this.ensureLeadingSlash(link.filePath)));
+      return guardStream(await this.ipfsHelper.read(normalPath));
     }
 
     throw new NotFoundHttpError();
@@ -93,6 +114,7 @@ export class IpfsDataAccessor implements DataAccessor {
   /**
    * Will return corresponding metadata by reading the metadata file (if it exists)
    * and adding IPFS specific metadata elements.
+   * Handles both regular files and large-file pointers (.ipfs-ptr).
    */
   public async getMetadata(identifier: ResourceIdentifier): Promise<RepresentationMetadata> {
     const link = await this.resourceMapper.mapUrlToFilePath(identifier, false);
@@ -114,7 +136,30 @@ export class IpfsDataAccessor implements DataAccessor {
         throw error;
       }
     }
-    const stats = await this.getStats(this.ensureLeadingSlash(link.filePath));
+
+    const normalPath = this.ensureLeadingSlash(link.filePath);
+    const pointerPath = normalPath + '.ipfs-ptr';
+
+    // Pointer case: large file — synthesise stats from the pointer JSON so that
+    // CSS reports the correct size and the real content CID.
+    if (await this.ipfsHelper.exists(pointerPath)) {
+      const pointer = await this.readPointer(pointerPath);
+      const ptrStats = await this.getStats(pointerPath);
+      // Override size and cid with values from the pointer, keep everything else
+      // (isFile, mtime, etc.) from the actual MFS pointer-file stats.
+      const virtualStats = Object.assign({}, ptrStats, {
+        size: pointer.size,
+        cid: { toString: (): string => pointer.cid },
+      }) as IpfsStats;
+      const meta = await this.getFileMetadata(link, virtualStats);
+      // Restore the original content-type — ptrStats would report application/json otherwise
+      if (pointer.contentType) {
+        meta.set(CONTENT_TYPE_TERM, pointer.contentType);
+      }
+      return meta;
+    }
+
+    const stats = await this.getStats(normalPath);
     if (stats.isFile()) {
       return this.getFileMetadata(link, stats);
     }
@@ -128,7 +173,11 @@ export class IpfsDataAccessor implements DataAccessor {
 
   /**
    * Writes the given data as a file (and potential metadata as additional file).
-   * The metadata file will be written first and will be deleted if something goes wrong writing the actual data.
+   *
+   * Small files (< LARGE_FILE_THRESHOLD) are written to MFS as before.
+   * Large files have their blocks added to IPFS (pinned), and only a tiny JSON
+   * pointer file (`.ipfs-ptr`) is stored in MFS.  The registry is then notified
+   * so a provider deal can be initiated.
    */
   public async writeDocument(identifier: ResourceIdentifier, data: Guarded<Readable>, metadata: RepresentationMetadata):
   Promise<void> {
@@ -137,21 +186,57 @@ export class IpfsDataAccessor implements DataAccessor {
     // Check if we already have a corresponding file with a different extension
     await this.verifyExistingExtension(link);
 
-    const wroteMetadata = await this.writeMetadataFile(link, metadata);
+    // Buffer the stream so we can (a) measure size, (b) branch on it
+    const chunks: Buffer[] = [];
+    for await (const chunk of data) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
+    }
+    const buffer = Buffer.concat(chunks as unknown as Uint8Array[]);
 
-    try {
-      await this.writeDataFile(this.ensureLeadingSlash(link.filePath), data);
-    } catch (error: unknown) {
-      // Delete the metadata if there was an error writing the file
-      if (wroteMetadata) {
-        const metaLink = await this.resourceMapper.mapUrlToFilePath(identifier, true);
-        try {
-          await this.ipfsHelper.unlink(this.ensureLeadingSlash(metaLink.filePath));
-        } catch {
-          // Ignore cleanup errors
+    const normalPath = this.ensureLeadingSlash(link.filePath);
+    const pointerPath = normalPath + '.ipfs-ptr';
+
+    if (buffer.length < LARGE_FILE_THRESHOLD) {
+      // ── PATH 1: small file / metadata ──────────────────────────────────────
+      // Clean up any stale pointer that may exist from a previous large upload
+      try { await this.ipfsHelper.unlink(pointerPath); } catch { /* no-op */ }
+
+      const wroteMetadata = await this.writeMetadataFile(link, metadata);
+      try {
+        await this.writeDataFile(normalPath, Readable.from(buffer));
+      } catch (error: unknown) {
+        if (wroteMetadata) {
+          const metaLink = await this.resourceMapper.mapUrlToFilePath(identifier, true);
+          try { await this.ipfsHelper.unlink(this.ensureLeadingSlash(metaLink.filePath)); } catch { /* ignore */ }
         }
+        throw error;
       }
-      throw error;
+    } else {
+      // ── PATH 2: large file ─────────────────────────────────────────────────
+      // Clean up any stale regular file that may exist from a previous small upload
+      try { await this.ipfsHelper.unlink(normalPath); } catch { /* no-op */ }
+
+      // 1. Add blocks to IPFS (pinned locally), get CID — does NOT write to MFS
+      const cid = await this.ipfsHelper.addContent(Readable.from(buffer));
+
+      // 2. Write tiny pointer JSON to MFS (the only MFS entry for this file)
+      const pointer = JSON.stringify({ type: 'ipfs-pointer', cid, size: buffer.length, contentType: metadata.contentType ?? '' });
+
+      const wroteMetadata = await this.writeMetadataFile(link, metadata);
+      try {
+        await this.writeDataFile(pointerPath, Readable.from(Buffer.from(pointer)));
+      } catch (error: unknown) {
+        if (wroteMetadata) {
+          const metaLink = await this.resourceMapper.mapUrlToFilePath(identifier, true);
+          try { await this.ipfsHelper.unlink(this.ensureLeadingSlash(metaLink.filePath)); } catch { /* ignore */ }
+        }
+        throw error;
+      }
+
+      // 3. Notify registry (fire-and-forget; failure is logged, not thrown)
+      this.notifyCloudPodForPinning(cid, identifier.path, buffer.length).catch((err: unknown) => {
+        this.logger.error(`Failed to notify CloudPod registry for pinning ${cid}: ${err}`);
+      });
     }
   }
 
@@ -180,6 +265,7 @@ export class IpfsDataAccessor implements DataAccessor {
 
   /**
    * Removes the corresponding file/folder (and metadata file).
+   * Handles both regular files and large-file pointer files (.ipfs-ptr).
    */
   public async deleteResource(identifier: ResourceIdentifier): Promise<void> {
     const metaLink = await this.resourceMapper.mapUrlToFilePath(identifier, true);
@@ -193,14 +279,26 @@ export class IpfsDataAccessor implements DataAccessor {
     }
 
     const link = await this.resourceMapper.mapUrlToFilePath(identifier, false);
-    const stats = await this.getStats(this.ensureLeadingSlash(link.filePath));
 
-    if (!isContainerIdentifier(identifier) && stats.isFile()) {
-      await this.ipfsHelper.unlink(this.ensureLeadingSlash(link.filePath));
-    } else if (isContainerIdentifier(identifier) && stats.isDirectory()) {
-      await this.ipfsHelper.rmdir(this.ensureLeadingSlash(link.filePath));
+    if (!isContainerIdentifier(identifier)) {
+      const normalPath = this.ensureLeadingSlash(link.filePath);
+      const pointerPath = normalPath + '.ipfs-ptr';
+      if (await this.ipfsHelper.exists(pointerPath)) {
+        await this.ipfsHelper.unlink(pointerPath);
+      } else {
+        const stats = await this.getStats(normalPath);
+        if (!stats.isFile()) {
+          throw new NotFoundHttpError();
+        }
+        await this.ipfsHelper.unlink(normalPath);
+      }
     } else {
-      throw new NotFoundHttpError();
+      const stats = await this.getStats(this.ensureLeadingSlash(link.filePath));
+      if (stats.isDirectory()) {
+        await this.ipfsHelper.rmdir(this.ensureLeadingSlash(link.filePath));
+      } else {
+        throw new NotFoundHttpError();
+      }
     }
   }
 
@@ -270,6 +368,12 @@ export class IpfsDataAccessor implements DataAccessor {
     if (isContainerPath(link.filePath) || typeof link.contentType !== 'undefined') {
       metadata.removeAll(CONTENT_TYPE_TERM);
     }
+    // These are always recomputed from IPFS stats at read time — never persist them in the .meta file.
+    // If stale values are stored, they collide with the correct values added by addPosixMetadata /
+    // addIpfsMetadata (which use .add(), not .set()), causing duplicate / wrong triples on responses.
+    metadata.removeAll(POSIX.terms.size);
+    metadata.removeAll(POSIX.terms.mtime);
+    metadata.removeAll(toNamedTerm('http://ipfs.io/ns/ipfs#cid'));
     const quads = metadata.quads();
     const metadataLink = await this.resourceMapper.mapUrlToFilePath(link.identifier, true);
     let wroteMetadata: boolean;
@@ -375,6 +479,43 @@ export class IpfsDataAccessor implements DataAccessor {
         continue;
       }
 
+      // Pointer files (.ipfs-ptr) represent large files whose blocks live at the provider.
+      // Re-map to the actual resource name by stripping the .ipfs-ptr suffix and
+      // synthesise metadata from the pointer JSON so the correct size is reported.
+      if (childName.endsWith('.ipfs-ptr')) {
+        const realName = childName.slice(0, -'.ipfs-ptr'.length); // e.g. cursuri_merged.pdf$.bin
+        const realPath = joinFilePath(link.filePath, realName);
+        let realLink;
+        try {
+          realLink = await this.resourceMapper.mapFilePathToUrl(realPath, false);
+        } catch {
+          continue;
+        }
+        if (realLink.isMetadata) {
+          continue;
+        }
+        let size = childStats.size;
+        try {
+          const pointer = await this.readPointer(childPathIpfs);
+          size = pointer.size;
+        } catch { /* use fallback */ }
+        const ptrMeta = new RepresentationMetadata(realLink.identifier);
+        addResourceMetadata(ptrMeta, false);
+        const virtualStats = Object.assign({}, childStats, { size }) as IpfsStats;
+        this.addPosixMetadata(ptrMeta, virtualStats);
+        const { contentType: ptrContentType, identifier: ptrIdentifier } = realLink;
+        if (ptrContentType) {
+          try {
+            const { value } = parseContentType(ptrContentType);
+            ptrMeta.add(RDF.terms.type, toNamedTerm(`${IANA.namespace}${value}#Resource`));
+          } catch {
+            this.logger.warn(`Detected an invalid content-type "${ptrContentType}" for ${ptrIdentifier.path}`);
+          }
+        }
+        yield ptrMeta;
+        continue;
+      }
+
       // Generate metadata for this child
       const metadata = new RepresentationMetadata(childLink.identifier);
       addResourceMetadata(metadata, childStats.isDirectory());
@@ -403,12 +544,15 @@ export class IpfsDataAccessor implements DataAccessor {
    */
   private addPosixMetadata(metadata: RepresentationMetadata, stats: IpfsStats): void {
     updateModifiedDate(metadata, stats.mtime);
+    // removeAll before add — prevents stale values from old .meta files from leaking into responses
+    metadata.removeAll(POSIX.terms.mtime);
     metadata.add(
       POSIX.terms.mtime,
       toLiteral(Math.floor(stats.mtime.getTime() / 1000), XSD.terms.integer),
       SOLID_META.terms.ResponseMetadata,
     );
     if (!stats.isDirectory()) {
+      metadata.removeAll(POSIX.terms.size);
       metadata.add(POSIX.terms.size, toLiteral(stats.size, XSD.terms.integer), SOLID_META.terms.ResponseMetadata);
     }
   }
@@ -420,7 +564,8 @@ export class IpfsDataAccessor implements DataAccessor {
    * @param stats - Stats of the file/directory corresponding to the resource.
    */
   private addIpfsMetadata(metadata: RepresentationMetadata, stats: IpfsStats): void {
-    // Add IPFS CID as metadata
+    // removeAll before add — prevents stale CID from old .meta files from leaking into responses
+    metadata.removeAll(toNamedTerm('http://ipfs.io/ns/ipfs#cid'));
     const cidString = stats.cid.toString();
     metadata.add(
       toNamedTerm('http://ipfs.io/ns/ipfs#cid'),
@@ -432,6 +577,7 @@ export class IpfsDataAccessor implements DataAccessor {
   /**
    * Verifies if there already is a file corresponding to the given resource.
    * If yes, that file is removed if it does not match the path given in the input ResourceLink.
+   * Also cleans up any pointer file associated with the old path.
    *
    * @param link - ResourceLink corresponding to the new resource data.
    */
@@ -440,7 +586,10 @@ export class IpfsDataAccessor implements DataAccessor {
       // Delete the old file with the (now) wrong extension
       const oldLink = await this.resourceMapper.mapUrlToFilePath(link.identifier, false);
       if (oldLink.filePath !== link.filePath) {
-        await this.ipfsHelper.unlink(this.ensureLeadingSlash(oldLink.filePath));
+        const oldPath = this.ensureLeadingSlash(oldLink.filePath);
+        // Clean up both the regular file and any pointer for the old path
+        try { await this.ipfsHelper.unlink(oldPath + '.ipfs-ptr'); } catch { /* no-op */ }
+        await this.ipfsHelper.unlink(oldPath);
       }
     } catch (error: unknown) {
       // Ignore if old file doesn't exist
@@ -458,5 +607,35 @@ export class IpfsDataAccessor implements DataAccessor {
    */
   protected async writeDataFile(path: string, data: Readable): Promise<void> {
     await this.ipfsHelper.write({ path, content: data });
+  }
+
+  /**
+   * Read and parse the JSON pointer stored at pointerPath.
+   */
+  private async readPointer(pointerPath: string): Promise<{ type: string; cid: string; size: number; contentType: string }> {
+    const stream = await this.ipfsHelper.read(pointerPath);
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
+    }
+    return JSON.parse(Buffer.concat(chunks as unknown as Uint8Array[]).toString('utf8'));
+  }
+
+  /**
+   * Notify the CloudPod registry that a large file was added to IPFS, so the registry
+   * can automatically create a pin_request and initiate a provider deal.
+   * This is fire-and-forget — the caller should `.catch()` any errors.
+   */
+  private async notifyCloudPodForPinning(cid: string, resourcePath: string, fileSize: number): Promise<void> {
+    const response = await fetch(`${REGISTRY_URL}/api/ipfs/pin-request-internal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cid, resourcePath, fileSize }),
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Registry returned ${response.status}: ${body}`);
+    }
+    this.logger.info(`📤 Notified CloudPod registry to pin ${cid}`);
   }
 }

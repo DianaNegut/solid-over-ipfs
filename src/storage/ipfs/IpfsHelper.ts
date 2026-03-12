@@ -347,14 +347,28 @@ export class IpfsHelper {
    */
   public async addContent(content: Readable): Promise<string> {
     await this.ensureClient();
-    this.logger.info('Adding content to IPFS network (pin only, no MFS copy)...');
+    this.logger.info('Adding content to IPFS network (staging pin — provider will be sole long-term pinner)...');
+    // Add WITHOUT implicit pin first — older ipfs-http-client versions silently drop
+    // the pin:true option for dag-pb (chunked) CIDv1 content.
     const addResult = await this.client.add(content, {
-      pin: true,
+      pin: false,
       cidVersion: 1,
       wrapWithDirectory: false,
     });
     const cid = addResult.cid.toString();
-    this.logger.info(`✅ Added to IPFS network (pinned): ${cid}`);
+
+    // Explicitly pin via client.pin.add() which is more reliable than pin:true in add().
+    // This is a TEMPORARY staging pin — staging-cleanup removes it once the provider
+    // has confirmed pinning so that CSS never becomes the permanent storage node.
+    try {
+      await this.client.pin.add(addResult.cid);
+      this.logger.info(`✅ Added & staging-pinned: ${cid}`);
+      this.logger.info(`📌 Staging pin created — will be removed after provider confirms deal`);
+    } catch (pinErr: any) {
+      this.logger.warn(`⚠️  pin.add() failed for ${cid}: ${pinErr.message}`);
+      this.logger.warn(`    Content is in blockstore but unprotected — provider must fetch before next repo gc`);
+    }
+
     return cid;
   }
 

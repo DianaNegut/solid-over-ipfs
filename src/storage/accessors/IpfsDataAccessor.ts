@@ -18,13 +18,7 @@ import type { FileIdentifierMapper, ResourceLink } from '../mapping/FileIdentifi
 import type { IpfsHelper, IpfsStats } from '../ipfs/IpfsHelper';
 import type { DataAccessor } from './DataAccessor';
 
-// Files larger than this threshold are stored as IPFS pointers instead of being
-// written directly into MFS.  Only the CID pointer (a tiny JSON file) goes to MFS;
-// the actual blocks stay pinned in Kubo until the provider confirms the deal.
-// Set to 0 to route ALL files (including small ones) through the provider deal flow.
-const LARGE_FILE_THRESHOLD = 0; // all files go to provider
-
-// Registry server URL — notified after adding a large file to IPFS so a provider
+// Registry server URL — notified after adding a file to IPFS so a provider
 // deal can be initiated automatically.
 const REGISTRY_URL = process.env.REGISTRY_API_URL || 'http://localhost:4000';
 
@@ -174,10 +168,10 @@ export class IpfsDataAccessor implements DataAccessor {
   /**
    * Writes the given data as a file (and potential metadata as additional file).
    *
-   * Small files (< LARGE_FILE_THRESHOLD) are written to MFS as before.
-   * Large files have their blocks added to IPFS (pinned), and only a tiny JSON
+   * All files have their blocks added to IPFS (staging pin), and only a tiny JSON
    * pointer file (`.ipfs-ptr`) is stored in MFS.  The registry is then notified
-   * so a provider deal can be initiated.
+   * so a provider deal can be initiated.  After the provider confirms, the staging
+   * pin is removed by the registry's staging-cleanup job.
    */
   public async writeDocument(identifier: ResourceIdentifier, data: Guarded<Readable>, metadata: RepresentationMetadata):
   Promise<void> {
@@ -186,7 +180,6 @@ export class IpfsDataAccessor implements DataAccessor {
     // Check if we already have a corresponding file with a different extension
     await this.verifyExistingExtension(link);
 
-    // Buffer the stream so we can (a) measure size, (b) branch on it
     const chunks: Buffer[] = [];
     for await (const chunk of data) {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
@@ -196,48 +189,27 @@ export class IpfsDataAccessor implements DataAccessor {
     const normalPath = this.ensureLeadingSlash(link.filePath);
     const pointerPath = normalPath + '.ipfs-ptr';
 
-    if (buffer.length < LARGE_FILE_THRESHOLD) {
-      // ── PATH 1: small file / metadata ──────────────────────────────────────
-      // Clean up any stale pointer that may exist from a previous large upload
-      try { await this.ipfsHelper.unlink(pointerPath); } catch { /* no-op */ }
+    // 1. Add blocks to IPFS (staging pin), get CID — does NOT write to MFS
+    const cid = await this.ipfsHelper.addContent(Readable.from(buffer));
 
-      const wroteMetadata = await this.writeMetadataFile(link, metadata);
-      try {
-        await this.writeDataFile(normalPath, Readable.from(buffer));
-      } catch (error: unknown) {
-        if (wroteMetadata) {
-          const metaLink = await this.resourceMapper.mapUrlToFilePath(identifier, true);
-          try { await this.ipfsHelper.unlink(this.ensureLeadingSlash(metaLink.filePath)); } catch { /* ignore */ }
-        }
-        throw error;
+    // 2. Write tiny pointer JSON to MFS (the only MFS entry for this file)
+    const pointer = JSON.stringify({ type: 'ipfs-pointer', cid, size: buffer.length, contentType: metadata.contentType ?? '' });
+
+    const wroteMetadata = await this.writeMetadataFile(link, metadata);
+    try {
+      await this.writeDataFile(pointerPath, Readable.from(Buffer.from(pointer)));
+    } catch (error: unknown) {
+      if (wroteMetadata) {
+        const metaLink = await this.resourceMapper.mapUrlToFilePath(identifier, true);
+        try { await this.ipfsHelper.unlink(this.ensureLeadingSlash(metaLink.filePath)); } catch { /* ignore */ }
       }
-    } else {
-      // ── PATH 2: large file ─────────────────────────────────────────────────
-      // Clean up any stale regular file that may exist from a previous small upload
-      try { await this.ipfsHelper.unlink(normalPath); } catch { /* no-op */ }
-
-      // 1. Add blocks to IPFS (pinned locally), get CID — does NOT write to MFS
-      const cid = await this.ipfsHelper.addContent(Readable.from(buffer));
-
-      // 2. Write tiny pointer JSON to MFS (the only MFS entry for this file)
-      const pointer = JSON.stringify({ type: 'ipfs-pointer', cid, size: buffer.length, contentType: metadata.contentType ?? '' });
-
-      const wroteMetadata = await this.writeMetadataFile(link, metadata);
-      try {
-        await this.writeDataFile(pointerPath, Readable.from(Buffer.from(pointer)));
-      } catch (error: unknown) {
-        if (wroteMetadata) {
-          const metaLink = await this.resourceMapper.mapUrlToFilePath(identifier, true);
-          try { await this.ipfsHelper.unlink(this.ensureLeadingSlash(metaLink.filePath)); } catch { /* ignore */ }
-        }
-        throw error;
-      }
-
-      // 3. Notify registry (fire-and-forget; failure is logged, not thrown)
-      this.notifyCloudPodForPinning(cid, identifier.path, buffer.length).catch((err: unknown) => {
-        this.logger.error(`Failed to notify CloudPod registry for pinning ${cid}: ${err}`);
-      });
+      throw error;
     }
+
+    // 3. Notify registry (fire-and-forget; failure is logged, not thrown)
+    this.notifyCloudPodForPinning(cid, identifier.path, buffer.length).catch((err: unknown) => {
+      this.logger.error(`Failed to notify CloudPod registry for pinning ${cid}: ${err}`);
+    });
   }
 
   /**
@@ -284,7 +256,26 @@ export class IpfsDataAccessor implements DataAccessor {
       const normalPath = this.ensureLeadingSlash(link.filePath);
       const pointerPath = normalPath + '.ipfs-ptr';
       if (await this.ipfsHelper.exists(pointerPath)) {
+        // Read CID from pointer before deleting so we can notify the registry
+        let cid: string | null = null;
+        try {
+          const readable = await this.ipfsHelper.read(pointerPath);
+          const chunks: Buffer[] = [];
+          for await (const chunk of readable) {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
+          }
+          const pointer = JSON.parse(Buffer.concat(chunks as unknown as Uint8Array[]).toString()) as { cid?: string };
+          cid = pointer.cid ?? null;
+        } catch { /* ignore — deletion proceeds regardless */ }
+
         await this.ipfsHelper.unlink(pointerPath);
+
+        // Notify registry to request provider unpin (fire-and-forget)
+        if (cid) {
+          this.notifyCloudPodForDeletion(cid, identifier.path).catch((err: unknown) => {
+            this.logger.warn(`Failed to notify registry for deletion of ${cid}: ${err}`);
+          });
+        }
       } else {
         const stats = await this.getStats(normalPath);
         if (!stats.isFile()) {
@@ -637,5 +628,18 @@ export class IpfsDataAccessor implements DataAccessor {
       throw new Error(`Registry returned ${response.status}: ${body}`);
     }
     this.logger.info(`📤 Notified CloudPod registry to pin ${cid}`);
+  }
+
+  private async notifyCloudPodForDeletion(cid: string, resourcePath: string): Promise<void> {
+    const response = await fetch(`${REGISTRY_URL}/api/ipfs/deletion-request-internal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cid, resourcePath }),
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Registry returned ${response.status}: ${body}`);
+    }
+    this.logger.info(`🗑️  Notified CloudPod registry to request deletion of ${cid}`);
   }
 }
